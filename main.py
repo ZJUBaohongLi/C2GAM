@@ -106,7 +106,7 @@ def train_vae(autoencoder, dataloader):
 
 
 def train_gan(label_generator, sample_generator, label_discriminator, sample_discriminator, obs_dataloader,
-              rct_dataloader):
+              rep_dataloader):
     epochs = config.get('gan_epochs')
     gen_lr = config.get('generator_lr')
     gen_wd = config.get('generator_wd')
@@ -126,25 +126,25 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
         sample_generator.train()
         label_discriminator.train()
         sample_discriminator.train()
-        rct_dataloader_iter = iter(rct_dataloader)
+        rep_dataloader_iter = iter(rep_dataloader)
         for index, data in enumerate(obs_dataloader):
             try:
-                rct_t_x_y = next(rct_dataloader_iter).to(device)
+                rep_t_x_y = next(rep_dataloader_iter).to(device)
             except StopIteration:
-                rct_dataloader_iter = iter(rct_dataloader)
-                rct_t_x_y = next(rct_dataloader_iter).to(device)
+                rep_dataloader_iter = iter(rep_dataloader)
+                rep_t_x_y = next(rep_dataloader_iter).to(device)
             obs_t_x_y = data.to(device)
             normal_distribution = D.Normal(0, 1)
             normal_distribution.loc = normal_distribution.loc.to(device)
             normal_distribution.scale = normal_distribution.scale.to(device)
-            rct_probability_gen = label_generator(rct_t_x_y)
+            rep_probability_gen = label_generator(rep_t_x_y)
             noise = normal_distribution.sample((len(obs_t_x_y), config.get('encoder_dim_latent')))
             unselected_t_x_y_gen = sample_generator(noise)
             unsel_probability_gen = label_generator(unselected_t_x_y_gen)
-            loss3 = -torch.mean(torch.log(label_discriminator(obs_t_x_y) + 1e-4) + rct_probability_gen * torch.log(
-                1 - label_discriminator(rct_t_x_y) + 1e-4) + unsel_probability_gen * torch.log(
+            loss3 = -torch.mean(torch.log(label_discriminator(obs_t_x_y) + 1e-4) + rep_probability_gen * torch.log(
+                1 - label_discriminator(rep_t_x_y) + 1e-4) + unsel_probability_gen * torch.log(
                 1 - label_discriminator(unselected_t_x_y_gen) + 1e-4))
-            loss4 = -torch.mean((1 - rct_probability_gen) * torch.log(sample_discriminator(rct_t_x_y) + 1e-4) + (
+            loss4 = -torch.mean((1 - rep_probability_gen) * torch.log(sample_discriminator(rep_t_x_y) + 1e-4) + (
                         1 - unsel_probability_gen) * torch.log(
                 sample_discriminator(unselected_t_x_y_gen) + 1e-4) + torch.log(
                 1 - sample_discriminator(unselected_t_x_y_gen) + 1e-4))
@@ -153,15 +153,15 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             dis_loss.backward()
             opt_dis.step()
             dis_loss_sum += dis_loss
-            rct_probability_gen = label_generator(rct_t_x_y)
+            rep_probability_gen = label_generator(rep_t_x_y)
             noise = normal_distribution.sample((len(obs_t_x_y), config.get('encoder_dim_latent')))
             unselected_t_x_y_gen = sample_generator(noise)
             unsel_probability_gen = label_generator(unselected_t_x_y_gen)
             loss1 = torch.mean((1 - unsel_probability_gen) * torch.log(
-                sample_discriminator(unselected_t_x_y_gen) + 1e-4) + rct_probability_gen * torch.log(
-                1 - label_discriminator(rct_t_x_y) + 1e-4) + unsel_probability_gen * torch.log(
-                1 - label_discriminator(unselected_t_x_y_gen) + 1e-4) + (1 - rct_probability_gen) * torch.log(
-                sample_discriminator(rct_t_x_y) + 1e-4))
+                sample_discriminator(unselected_t_x_y_gen) + 1e-4) + rep_probability_gen * torch.log(
+                1 - label_discriminator(rep_t_x_y) + 1e-4) + unsel_probability_gen * torch.log(
+                1 - label_discriminator(unselected_t_x_y_gen) + 1e-4) + (1 - rep_probability_gen) * torch.log(
+                sample_discriminator(rep_t_x_y) + 1e-4))
             loss2 = torch.mean(
                 unsel_probability_gen * torch.log(1 - label_discriminator(unselected_t_x_y_gen) + 1e-4) + torch.log(
                     1 - sample_discriminator(unselected_t_x_y_gen) + 1e-4) + (1 - unsel_probability_gen) * torch.log(
@@ -171,12 +171,12 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             opt_gen.zero_grad()
             gen_loss.backward()
             opt_gen.step()
-            rct_probability_gen = label_generator(rct_t_x_y)
-            labels = (rct_probability_gen >= 0.5)
+            rep_probability_gen = label_generator(rep_t_x_y)
+            labels = (rep_probability_gen >= 0.5)
             n_gen = 2 + (len(labels) - torch.sum(labels)) / (torch.sum(labels) + 1) * len(obs_t_x_y)
             noise = normal_distribution.sample(((n_gen.int()), config.get('encoder_dim_latent')))
             unselected_t_x_y_gen = sample_generator(noise)
-            distance, _, _ = wasserstein_func(torch.cat((obs_t_x_y, unselected_t_x_y_gen), 0), rct_t_x_y)
+            distance, _, _ = wasserstein_func(torch.cat((obs_t_x_y, unselected_t_x_y_gen), 0), rep_t_x_y)
             distance_sum += distance
             opt_gen.zero_grad()
             distance.backward()
@@ -254,27 +254,27 @@ res_list = []
 for i in range(Config.experiment_num):
     print("Data Preparation")
     obs_file_path = data_path + '_obs.csv'
-    rct_file_path = data_path + '_rct.csv'
+    rep_file_path = data_path + '_rep.csv'
     unselected_file_path = data_path + '_unsel.csv'
     print("Generate Samples")
-    rct_t_train, rct_t_test, rct_t_val, rct_x_train, rct_x_test, rct_x_val, rct_y_train, rct_y_test, rct_y_val, rct_s_train, rct_s_test, rct_s_val, rct_gt_train, rct_gt_test, rct_gt_val = load_data(
-        rct_file_path)
+    rep_t_train, rep_t_test, rep_t_val, rep_x_train, rep_x_test, rep_x_val, rep_y_train, rep_y_test, rep_y_val, rep_s_train, rep_s_test, rep_s_val, rep_gt_train, rep_gt_test, rep_gt_val = load_data(
+        rep_file_path)
     obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val, obs_s_train, obs_s_test, obs_s_val, obs_gt_train, obs_gt_test, obs_gt_val = load_data(
         obs_file_path)
     unselected_t_train, unselected_t_test, unselected_t_val, unselected_x_train, unselected_x_test, unselected_x_val, unselected_y_train, unselected_y_test, unselected_y_val, unselected_s_train, unselected_s_test, unselected_s_val, unselected_gt_train, unselected_gt_test, unselected_gt_val = load_data(
         unselected_file_path)
-    rct_generator_train_dataset, rct_generator_test_dataset, rct_generator_val_dataset = build_generator_dataset(
-        rct_t_train, rct_t_test, rct_t_val, rct_x_train, rct_x_test, rct_x_val, rct_y_train, rct_y_test, rct_y_val)
+    rep_generator_train_dataset, rep_generator_test_dataset, rep_generator_val_dataset = build_generator_dataset(
+        rep_t_train, rep_t_test, rep_t_val, rep_x_train, rep_x_test, rep_x_val, rep_y_train, rep_y_test, rep_y_val)
     obs_generator_train_dataset, obs_generator_test_dataset, obs_generator_val_dataset = build_generator_dataset(
         obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val)
     unsel_generator_train_dataset, unsel_generator_test_dataset, unsel_generator_val_dataset = build_generator_dataset(
         unselected_t_train, unselected_t_test, unselected_t_val, unselected_x_train, unselected_x_test, unselected_x_val, unselected_y_train, unselected_y_test, unselected_y_val)
-    rct_gen_train_dataloader = DataLoader(rct_generator_train_dataset, batch_size=config.get('gen_batch_num'),
+    rep_gen_train_dataloader = DataLoader(rep_generator_train_dataset, batch_size=config.get('gen_batch_num'),
                                           shuffle=True, drop_last=False)
     obs_gen_train_dataloader = DataLoader(obs_generator_train_dataset, batch_size=config.get('gen_batch_num'),
                                           shuffle=True, drop_last=True)
     vae = VariationalAutoencoder(config).to(device)
-    vae = train_vae(vae, rct_gen_train_dataloader)
+    vae = train_vae(vae, rep_gen_train_dataloader)
     sample_generator = vae.decoder
     normal_distribution = D.Normal(0, 1)
     normal_distribution.loc = normal_distribution.loc.to(device)
@@ -287,36 +287,36 @@ for i in range(Config.experiment_num):
                                                                                              label_discriminator,
                                                                                              sample_discriminator,
                                                                                              obs_gen_train_dataloader,
-                                                                                             rct_gen_train_dataloader,
+                                                                                             rep_gen_train_dataloader,
                                                                                              )
     generated_labels = generate_labels(label_generator,
-                                       torch.tensor(np.concatenate((rct_t_train, rct_x_train, rct_y_train), axis=1),
+                                       torch.tensor(np.concatenate((rep_t_train, rep_x_train, rep_y_train), axis=1),
                                                     dtype=torch.float32))
     labels = (generated_labels >= 0.5)
     n_gen = 2 + (len(labels) - torch.sum(labels)) / (torch.sum(labels) + 1) * len(obs_t_train)
     noise = normal_distribution.sample((n_gen.int(), config.get('encoder_dim_latent')))
     generated_samples = sample_generator(noise)
     generated_samples = generated_samples.detach().cpu().numpy()
-    rct_estimator_train_dataset, rct_estimator_test_dataset, rct_estimator_val_dataset = build_estimator_dataset(
-        rct_t_train, rct_t_test, rct_t_val, rct_x_train, rct_x_test, rct_x_val, rct_y_train, rct_y_test, rct_y_val)
+    rep_estimator_train_dataset, rep_estimator_test_dataset, rep_estimator_val_dataset = build_estimator_dataset(
+        rep_t_train, rep_t_test, rep_t_val, rep_x_train, rep_x_test, rep_x_val, rep_y_train, rep_y_test, rep_y_val)
     obs_estimator_train_dataset, obs_estimator_test_dataset, obs_estimator_val_dataset = build_estimator_dataset(
         obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val)
     obs_cf_train_dataset, obs_cf_test_dataset, obs_cf_val_dataset = build_cf_dataset(
         obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val)
     gen_estimator_train_dataset, gen_estimator_test_dataset, gen_estimator_val_dataset = build_estimator_dataset(
-        np.concatenate((obs_t_train, generated_samples[:, 0].reshape(-1, 1), rct_t_train), axis=0),
+        np.concatenate((obs_t_train, generated_samples[:, 0].reshape(-1, 1), rep_t_train), axis=0),
         obs_t_test, obs_t_val,
         np.concatenate(
-            (obs_x_train, generated_samples[:, [i for i in range(1, Config.confounds_num + 1)]], rct_x_train), axis=0),
+            (obs_x_train, generated_samples[:, [i for i in range(1, Config.confounds_num + 1)]], rep_x_train), axis=0),
         obs_x_test, obs_x_val,
-        np.concatenate((obs_y_train, generated_samples[:, Config.confounds_num + 1].reshape(-1, 1), rct_y_train),
+        np.concatenate((obs_y_train, generated_samples[:, Config.confounds_num + 1].reshape(-1, 1), rep_y_train),
                        axis=0),
         obs_y_test, obs_y_val
     )
     comb_estimator_train_dataset, comb_estimator_test_dataset, comb_estimator_val_dataset = build_estimator_dataset(
-        np.concatenate((obs_t_train, rct_t_train), axis=0), obs_t_test, obs_t_val,
-        np.concatenate((obs_x_train, rct_x_train), axis=0), obs_x_test, obs_x_val,
-        np.concatenate((obs_y_train, rct_y_train), axis=0), obs_y_test, obs_y_val
+        np.concatenate((obs_t_train, rep_t_train), axis=0), obs_t_test, obs_t_val,
+        np.concatenate((obs_x_train, rep_x_train), axis=0), obs_x_test, obs_x_val,
+        np.concatenate((obs_y_train, rep_y_train), axis=0), obs_y_test, obs_y_val
     )
     unsel_estimator_train_dataset, unsel_estimator_test_dataset, unsel_estimator_val_dataset = build_estimator_dataset(
         unselected_t_train, unselected_t_test, unselected_t_val,
