@@ -2,6 +2,7 @@ class Config:
     data = 'data/ihdp'
     experiment_num = 50
     confounds_num = 25
+    bin_feats = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
     config = {
         'encoder_dim_in': confounds_num + 2,
         'encoder_dim_out': 10,

@@ -20,7 +20,7 @@ class SinkhornDistance(nn.Module):
         - Output: :math:`(N)` or :math:`()`, depending on `reduction`
     """
 
-    def __init__(self, eps, max_iter, reduction='mean', device='cpu'):
+    def __init__(self, eps, max_iter, reduction='none', device='cpu'):
         super(SinkhornDistance, self).__init__()
         self.eps = eps
         self.max_iter = max_iter
@@ -42,6 +42,8 @@ class SinkhornDistance(nn.Module):
                          requires_grad=False).fill_(1.0 / (x_points + 1e-3)).squeeze()
         nu = torch.empty(batch_size, y_points, dtype=torch.float,
                          requires_grad=False).fill_(1.0 / (y_points + 1e-3)).squeeze()
+        if nu.dim() == 0:
+            nu = nu.unsqueeze(0)
         mu = mu.to(self.device)
         nu = nu.to(self.device)
         u = torch.zeros_like(mu)

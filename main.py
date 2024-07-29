@@ -82,7 +82,7 @@ def build_cf_dataset(t_train, t_test, t_val, x_train, x_test, x_val, y_train, y_
     return estimator_train_dataset, estimator_test_dataset, estimator_val_dataset
 
 
-def train_vae(autoencoder, dataloader):
+def train_vae(autoencoder, dataloader, bin_feats):
     epochs = config.get('vae_epochs')
     lr = config.get('encoder_lr')
     wd = config.get('encoder_wd')
@@ -95,7 +95,7 @@ def train_vae(autoencoder, dataloader):
         for t_x_y in dataloader:
             t_x_y = t_x_y.to(device)
             opt.zero_grad()
-            x_hat = autoencoder(t_x_y)
+            x_hat = autoencoder(t_x_y, bin_feats)
             loss = mse_func(t_x_y.float(), x_hat) + autoencoder.encoder.kl
             loss_sum += loss
             loss.backward()
@@ -106,7 +106,7 @@ def train_vae(autoencoder, dataloader):
 
 
 def train_gan(label_generator, sample_generator, label_discriminator, sample_discriminator, obs_dataloader,
-              rep_dataloader):
+              rep_dataloader, bin_feats):
     epochs = config.get('gan_epochs')
     gen_lr = config.get('generator_lr')
     gen_wd = config.get('generator_wd')
@@ -116,6 +116,8 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
                                weight_decay=gen_wd)
     opt_dis = torch.optim.Adam(chain(label_discriminator.parameters(), sample_discriminator.parameters()), lr=dis_lr,
                                weight_decay=dis_wd)
+    opt_sgen = torch.optim.Adam(sample_generator.parameters(), lr=gen_lr,
+                                weight_decay=gen_wd)
     wasserstein_func = SinkhornDistance(0.1, 100, reduction='mean', device=device)
     writer = SummaryWriter()
     for epoch in range(epochs):
@@ -139,15 +141,11 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             normal_distribution.scale = normal_distribution.scale.to(device)
             rep_probability_gen = label_generator(rep_t_x_y)
             noise = normal_distribution.sample((len(obs_t_x_y), config.get('encoder_dim_latent')))
-            unselected_t_x_y_gen = sample_generator(noise)
-            unsel_probability_gen = label_generator(unselected_t_x_y_gen)
+            unselected_t_x_y_gen = sample_generator(noise, bin_feats)
             loss3 = -torch.mean(torch.log(label_discriminator(obs_t_x_y) + 1e-4) + rep_probability_gen * torch.log(
-                1 - label_discriminator(rep_t_x_y) + 1e-4) + unsel_probability_gen * torch.log(
-                1 - label_discriminator(unselected_t_x_y_gen) + 1e-4))
-            loss4 = -torch.mean((1 - rep_probability_gen) * torch.log(sample_discriminator(rep_t_x_y) + 1e-4) + (
-                        1 - unsel_probability_gen) * torch.log(
-                sample_discriminator(unselected_t_x_y_gen) + 1e-4) + torch.log(
-                1 - sample_discriminator(unselected_t_x_y_gen) + 1e-4))
+                1 - label_discriminator(rep_t_x_y) + 1e-4))
+            loss4 = -torch.mean((1 - rep_probability_gen) * torch.log(sample_discriminator(rep_t_x_y) + 1e-4) +
+                                torch.log(1 - sample_discriminator(unselected_t_x_y_gen) + 1e-4))
             dis_loss = loss4 + loss3
             opt_dis.zero_grad()
             dis_loss.backward()
@@ -155,7 +153,7 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             dis_loss_sum += dis_loss
             rep_probability_gen = label_generator(rep_t_x_y)
             noise = normal_distribution.sample((len(obs_t_x_y), config.get('encoder_dim_latent')))
-            unselected_t_x_y_gen = sample_generator(noise)
+            unselected_t_x_y_gen = sample_generator(noise, bin_feats)
             unsel_probability_gen = label_generator(unselected_t_x_y_gen)
             loss1 = torch.mean((1 - unsel_probability_gen) * torch.log(
                 sample_discriminator(unselected_t_x_y_gen) + 1e-4) + rep_probability_gen * torch.log(
@@ -175,12 +173,12 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             labels = (rep_probability_gen >= 0.5)
             n_gen = 2 + (len(labels) - torch.sum(labels)) / (torch.sum(labels) + 1) * len(obs_t_x_y)
             noise = normal_distribution.sample(((n_gen.int()), config.get('encoder_dim_latent')))
-            unselected_t_x_y_gen = sample_generator(noise)
+            unselected_t_x_y_gen = sample_generator(noise, bin_feats)
             distance, _, _ = wasserstein_func(torch.cat((obs_t_x_y, unselected_t_x_y_gen), 0), rep_t_x_y)
             distance_sum += distance
-            opt_gen.zero_grad()
+            opt_sgen.zero_grad()
             distance.backward()
-            opt_gen.step()
+            opt_sgen.step()
         writer.add_scalar('Dis loss', dis_loss_sum, epoch)
         writer.add_scalar('Gen loss', gen_loss_sum, epoch)
         writer.add_scalar('Distance', distance_sum, epoch)
@@ -256,7 +254,7 @@ for i in range(Config.experiment_num):
     obs_file_path = data_path + '_obs.csv'
     rep_file_path = data_path + '_rep.csv'
     unselected_file_path = data_path + '_unsel.csv'
-    print("Generate Samples")
+    bin_feats = [0] + Config.bin_feats
     rep_t_train, rep_t_test, rep_t_val, rep_x_train, rep_x_test, rep_x_val, rep_y_train, rep_y_test, rep_y_val, rep_s_train, rep_s_test, rep_s_val, rep_gt_train, rep_gt_test, rep_gt_val = load_data(
         rep_file_path)
     obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val, obs_s_train, obs_s_test, obs_s_val, obs_gt_train, obs_gt_test, obs_gt_val = load_data(
@@ -268,13 +266,15 @@ for i in range(Config.experiment_num):
     obs_generator_train_dataset, obs_generator_test_dataset, obs_generator_val_dataset = build_generator_dataset(
         obs_t_train, obs_t_test, obs_t_val, obs_x_train, obs_x_test, obs_x_val, obs_y_train, obs_y_test, obs_y_val)
     unsel_generator_train_dataset, unsel_generator_test_dataset, unsel_generator_val_dataset = build_generator_dataset(
-        unselected_t_train, unselected_t_test, unselected_t_val, unselected_x_train, unselected_x_test, unselected_x_val, unselected_y_train, unselected_y_test, unselected_y_val)
+        unselected_t_train, unselected_t_test, unselected_t_val, unselected_x_train, unselected_x_test,
+        unselected_x_val, unselected_y_train, unselected_y_test, unselected_y_val)
+    print("Generate Samples")
     rep_gen_train_dataloader = DataLoader(rep_generator_train_dataset, batch_size=config.get('gen_batch_num'),
                                           shuffle=True, drop_last=False)
     obs_gen_train_dataloader = DataLoader(obs_generator_train_dataset, batch_size=config.get('gen_batch_num'),
                                           shuffle=True, drop_last=True)
     vae = VariationalAutoencoder(config).to(device)
-    vae = train_vae(vae, rep_gen_train_dataloader)
+    vae = train_vae(vae, rep_gen_train_dataloader, bin_feats)
     sample_generator = vae.decoder
     normal_distribution = D.Normal(0, 1)
     normal_distribution.loc = normal_distribution.loc.to(device)
@@ -288,6 +288,7 @@ for i in range(Config.experiment_num):
                                                                                              sample_discriminator,
                                                                                              obs_gen_train_dataloader,
                                                                                              rep_gen_train_dataloader,
+                                                                                             bin_feats
                                                                                              )
     generated_labels = generate_labels(label_generator,
                                        torch.tensor(np.concatenate((rep_t_train, rep_x_train, rep_y_train), axis=1),
@@ -295,7 +296,7 @@ for i in range(Config.experiment_num):
     labels = (generated_labels >= 0.5)
     n_gen = 2 + (len(labels) - torch.sum(labels)) / (torch.sum(labels) + 1) * len(obs_t_train)
     noise = normal_distribution.sample((n_gen.int(), config.get('encoder_dim_latent')))
-    generated_samples = sample_generator(noise)
+    generated_samples = sample_generator(noise, bin_feats)
     generated_samples = generated_samples.detach().cpu().numpy()
     rep_estimator_train_dataset, rep_estimator_test_dataset, rep_estimator_val_dataset = build_estimator_dataset(
         rep_t_train, rep_t_test, rep_t_val, rep_x_train, rep_x_test, rep_x_val, rep_y_train, rep_y_test, rep_y_val)
@@ -326,7 +327,7 @@ for i in range(Config.experiment_num):
     unsel_gan_y_cf = test_estimator_bnn(gan_estimator, 1 - unselected_t_test, unselected_x_test)
     ite_gan = np.where(obs_t_test == 1, gan_y_fact - gan_y_cf, gan_y_cf - gan_y_fact).reshape(-1, 1)
     unsel_ite_gan = np.where(unselected_t_test == 1, unsel_gan_y_fact - unsel_gan_y_cf,
-                                 unsel_gan_y_cf - unsel_gan_y_fact).reshape(-1, 1)
+                             unsel_gan_y_cf - unsel_gan_y_fact).reshape(-1, 1)
     res_list.append(np.sqrt(np.mean(np.square(ite_gan - obs_gt_test))))
     res_list.append(np.sqrt(np.mean(np.square(unsel_ite_gan - unselected_gt_test))))
     if device == 'cuda':

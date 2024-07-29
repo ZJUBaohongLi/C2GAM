@@ -60,15 +60,15 @@ class Decoder(nn.Module):
             ) for i in range(layer_num - 1, 0, -1)
         ])
         self.output_layer = nn.Linear(dim_in - (dim_in - dim_out) // layer_num, dim_in)
-        self.treatment_layer = nn.Sigmoid()
+        self.sigmoid_layer = nn.Sigmoid()
 
-    def forward(self, z):
+    def forward(self, z, bin_feats):
         z_rep = z.to(torch.float32)
         z_rep = self.rep_layer(z_rep)
         for layer in self.mlp:
             z_rep = layer(z_rep)
         x = self.output_layer(z_rep)
-        x[:, 0] = self.treatment_layer(x[:, 0])
+        x[:, bin_feats] = self.sigmoid_layer(x[:, bin_feats])
         return x
 
 
@@ -78,7 +78,7 @@ class VariationalAutoencoder(nn.Module):
         self.encoder = Encoder(config)
         self.decoder = Decoder(config)
 
-    def forward(self, x):
+    def forward(self, x, bin_feats):
         z = self.encoder(x)
-        ret = self.decoder(z)
+        ret = self.decoder(z, bin_feats)
         return ret
