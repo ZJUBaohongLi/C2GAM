@@ -163,7 +163,7 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             loss2 = torch.mean(
                 unsel_probability_gen * torch.log(1 - label_discriminator(unselected_t_x_y_gen) + 1e-4) + torch.log(
                     1 - sample_discriminator(unselected_t_x_y_gen) + 1e-4) + (1 - unsel_probability_gen) * torch.log(
-                    sample_discriminator(unselected_t_x_y_gen)) + 1e-4)
+                    sample_discriminator(unselected_t_x_y_gen) + 1e-4))
             gen_loss = loss1 + loss2
             gen_loss_sum += gen_loss
             opt_gen.zero_grad()
