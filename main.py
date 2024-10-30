@@ -175,6 +175,7 @@ def train_gan(label_generator, sample_generator, label_discriminator, sample_dis
             noise = normal_distribution.sample(((n_gen.int()), config.get('encoder_dim_latent')))
             unselected_t_x_y_gen = sample_generator(noise, bin_feats)
             distance, _, _ = wasserstein_func(torch.cat((obs_t_x_y, unselected_t_x_y_gen), 0), rep_t_x_y)
+            distance = torch.abs(distance)
             distance_sum += distance
             opt_sgen.zero_grad()
             distance.backward()
@@ -214,7 +215,7 @@ def train_estimator_bnn(estimator, train_dataloader, val_dataloader):
             y_pre, t_rep, c_rep = estimator(t, x)
             loss1 = regression_loss_func(y_pre.to(torch.float32), ground_truth.to(torch.float32))
             loss2, _, _ = wasserstein_func(t_rep, c_rep)
-            loss = loss1 + ipm_weight * loss2
+            loss = loss1 + ipm_weight * torch.abs(loss2)
             loss_sum += loss
             optimizer.zero_grad()
             loss.backward()
